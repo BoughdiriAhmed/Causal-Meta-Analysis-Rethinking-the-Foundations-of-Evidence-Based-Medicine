@@ -1,0 +1,141 @@
+---
+title: "Meta_Cima"
+output: html_document
+date: "2025-05-21"
+---
+
+```{r}
+library(data.table)
+library(ggplot2)
+library(dplyr)
+library(metafor)
+library(CaMeA)
+```
+
+```{r}
+merged <- fread("out2_ma_sample_2.csv")
+merged <- merged[n.e > 0 & n.c > 0]
+merged <- merged[!is.na(event.e) & !is.na(event.c)]
+merged$group.no[is.na(merged$group.no)] <- 0
+```
+
+```{r}
+# Single-group forest plot with study names
+target_group <- list(comp.no = 1, outcome.no = 45, group.no = 0, cochrane_id = "CD012481")
+measure <- "RR"
+
+group_data <- merged[
+  comp.no == target_group$comp.no & outcome.no == target_group$outcome.no &
+  group.no == target_group$group.no & cochrane_id == target_group$cochrane_id
+]
+
+# Standard random-effects (carries study labels via slab)
+dat <- escalc(measure = measure, ai = event.e, n1i = n.e,
+              ci = event.c, n2i = n.c, data = group_data, slab = studlab)
+res <- rma(yi, vi, data = dat, method = "DL")
+
+# CaMeA aggregate estimate
+agg <- camea(
+  measure   = measure,
+  ai        = group_data$event.e, n1i = group_data$n.e,
+  ci        = group_data$event.c, n2i = group_data$n.c,
+  log.scale = TRUE
+)[[2]]
+
+res_camea <- rma(yi = agg$estimate, sei = agg$se, method = "FE")
+
+# Forest plot with both summaries
+par(mar = c(2, 2, 2, 2))
+forest(res, header = TRUE, top = 3,
+       mlab = "Random-effects model",
+       ylim = c(-3, nrow(dat) + 3))
+addpoly(res_camea, row = -2, mlab = "Causal meta-analysis (CaMeA)")
+```
+
+```{r}
+# Full loop: scatter plot comparing CaMeA vs random-effects
+measures <- c("RR")
+
+plot_data <- lapply(measures, function(measure) {
+  use_log       <- measure %in% c("RR", "OR", "SR")
+  unique_groups <- unique(merged[, .(comp.no, outcome.no, group.no, cochrane_id)])
+
+  lapply(1:nrow(unique_groups), function(i) {
+    row        <- unique_groups[i, ]
+    group_data <- merged[
+      comp.no == row$comp.no & outcome.no == row$outcome.no &
+      group.no == row$group.no & cochrane_id == row$cochrane_id
+    ]
+
+    # Standard random-effects (metafor)
+    res <- tryCatch({
+      dat <- escalc(measure = measure, ai = event.e, n1i = n.e,
+                    ci = event.c, n2i = n.c, data = group_data, slab = studlab,
+                    add = 0.5, to = "only0")  # adds 0.5 only to studies with a zero cell
+      rma(yi, vi, data = dat, method = "DL")
+    }, error = function(e) NULL)
+
+    # CaMeA
+    agg <- tryCatch({
+      camea(measure = measure,
+            ai = group_data$event.e, n1i = group_data$n.e,
+            ci = group_data$event.c, n2i = group_data$n.c,
+            log.scale = use_log)[[2]]
+    }, error = function(e) NULL)
+
+    tibble(
+      measure     = measure,
+      comp.no     = row$comp.no,
+      outcome.no  = row$outcome.no,
+      group.no    = row$group.no,
+      cochrane_id = row$cochrane_id,
+
+      res_estimate  = if (!is.null(res)) as.numeric(res$b)     else NA_real_,
+      res_ci_lb     = if (!is.null(res)) as.numeric(res$ci.lb) else NA_real_,
+      res_ci_ub     = if (!is.null(res)) as.numeric(res$ci.ub) else NA_real_,
+
+      res2_estimate = if (!is.null(agg)) agg$estimate                  else NA_real_,
+      res2_ci_lb    = if (!is.null(agg)) agg$estimate - 1.96 * agg$se  else NA_real_,
+      res2_ci_ub    = if (!is.null(agg)) agg$estimate + 1.96 * agg$se  else NA_real_
+    )
+  }) |> dplyr::bind_rows()
+}) |> dplyr::bind_rows()
+
+# Clean + discrepancy
+clean_plot_data <- plot_data %>%
+  dplyr::filter(
+    !is.na(res_estimate), !is.na(res2_estimate),
+    !is.na(res_ci_lb),    !is.na(res_ci_ub),
+    !is.na(res2_ci_lb),   !is.na(res2_ci_ub)
+  ) %>%
+  dplyr::mutate(discrepancy = abs(res2_estimate - res_estimate))
+
+# Highlight split
+highlight_data <- clean_plot_data %>%
+  dplyr::filter(comp.no == 1, outcome.no == 45, group.no == 0, cochrane_id == "CD012481")
+
+normal_data <- clean_plot_data %>%
+  dplyr::filter(!(comp.no == 1 & outcome.no == 45 & group.no == 0 & cochrane_id == "CD012481"))
+
+# Scatter plot
+ggplot() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey") +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey", alpha = 0.7) +
+  geom_vline(xintercept = 0, linetype = "solid", color = "grey", alpha = 0.7) +
+  geom_point(data = normal_data,
+             aes(x = res_estimate, y = res2_estimate, colour = discrepancy),
+             size = 2.5, alpha = 0.8) +
+  geom_point(data = highlight_data,
+             aes(x = res_estimate, y = res2_estimate),
+             shape = 17, size = 4, colour = "black") +
+  scale_colour_gradient(low = "#56B1F7", high = "#CA0020", name = "discrepancy") +
+  scale_x_continuous(limits = c(-1, 1)) +
+  scale_y_continuous(limits = c(-1, 1)) +
+  labs(x = "Random-effects model", y = "Causal meta-analysis (CaMeA)",
+       title = paste(ifelse(measures %in% c("RR", "OR", "SR"), paste0("log(", measures, ")"), measures), collapse = ", ")) +
+  theme_minimal() +
+  theme(plot.title   = element_text(size = 20, hjust = 0.5),
+        axis.title.x = element_text(size = 16),
+        axis.title.y = element_text(size = 16)) +
+  coord_fixed()
+```
