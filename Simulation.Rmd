@@ -54,7 +54,7 @@ addpoly(res_camea, row = -2, mlab = "Causal meta-analysis (CaMeA)")
 
 ```{r}
 # Full loop: scatter plot comparing CaMeA vs random-effects
-measures <- c("RR")
+measures <- c("RD")
 
 plot_data <- lapply(measures, function(measure) {
   use_log       <- measure %in% c("RR", "OR", "SR")
@@ -118,24 +118,26 @@ normal_data <- clean_plot_data %>%
   dplyr::filter(!(comp.no == 1 & outcome.no == 45 & group.no == 0 & cochrane_id == "CD012481"))
 
 # Scatter plot
-ggplot() +
+
+p <- ggplot() +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey") +
   geom_hline(yintercept = 0, linetype = "solid", color = "grey", alpha = 0.7) +
   geom_vline(xintercept = 0, linetype = "solid", color = "grey", alpha = 0.7) +
   geom_point(data = normal_data,
-             aes(x = res_estimate, y = res2_estimate, colour = discrepancy),
-             size = 2.5, alpha = 0.8) +
+             aes(x = res_estimate, y = res2_estimate),
+             size = 2.5, alpha = 0.8, colour = "#56B1F7") +
   geom_point(data = highlight_data,
              aes(x = res_estimate, y = res2_estimate),
              shape = 17, size = 4, colour = "black") +
-  scale_colour_gradient(low = "#56B1F7", high = "#CA0020", name = "discrepancy") +
   scale_x_continuous(limits = c(-1, 1)) +
   scale_y_continuous(limits = c(-1, 1)) +
-  labs(x = "Random-effects model", y = "Causal meta-analysis (CaMeA)",
+  labs(x = "Random-effects model", y = "Causal meta-analysis",
        title = paste(ifelse(measures %in% c("RR", "OR", "SR"), paste0("log(", measures, ")"), measures), collapse = ", ")) +
   theme_minimal() +
-  theme(plot.title   = element_text(size = 20, hjust = 0.5),
-        axis.title.x = element_text(size = 16),
-        axis.title.y = element_text(size = 16)) +
+  theme(plot.title   = element_text(size = 35, hjust = 0.5),
+        axis.title.x = element_text(size = 28),
+        axis.title.y = element_text(size = 28)) +
   coord_fixed()
+
+ggsave("RD.pdf", plot = p, width = 7, height = 7)
 ```
